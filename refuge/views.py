@@ -1,4 +1,4 @@
-from rest_framework.generics import ListCreateAPIView, RetrieveUpdateDestroyAPIView
+from rest_framework.generics import ListCreateAPIView, RetrieveUpdateDestroyAPIView, ListAPIView
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny
@@ -20,8 +20,10 @@ from .serializers import (
     UserRegistrationSerializer,
     EmailTokenObtainPairSerializer,
     JoinGroupSerializer,
-
+    AttendanceReportSerializer
 )
+import logging
+from django.db import IntegrityError
 
 # =======================
 # User Registration Views
@@ -209,6 +211,9 @@ class CurrentQRView(APIView):
         return Response({"token": qr.token})
 
 
+
+logger = logging.getLogger(__name__)
+
 class ScanQRView(APIView):
     """
     Scan a QR code and mark attendance for the authenticated user.
@@ -231,7 +236,7 @@ class ScanQRView(APIView):
             token=token,
             is_active=True,
             expires_at__gte=timezone.now()
-        ).first()
+        ).select_related("group").first()
 
         # Invalid or expired QR
         if not qr:
@@ -239,18 +244,31 @@ class ScanQRView(APIView):
         
         # Ensure user belongs to the same group as the QR
         if request.user.group != qr.group:
-            return Response({"detail": "Wrong group"}, status=403)
+            return Response({"detail": "QR does not belong to your group"}, status=403)
         
+        try:
         # Record attendance (prevents duplicate scans)
-        attendance, created = Attendance.objects.get_or_create(
+            Attendance.objects.create(
             user=request.user,
             group=qr.group,
             qr_session=qr
         )
-
+        except IntegrityError:
+            return Response({"detail":"Attendance already recorded"}, status=409)
         
-        # User has already checked in
-        if not created:
-            return Response({"detail": "Already checked in"}, status=400)
+        logger.info(
+            f"[ATTENDANCE] user={request.user.id} group={qr.group.id} qr={qr.id}"
+        )
 
-        return Response({"detail": "Attendance recorded"}, status=201)
+        return Response({"detail":"Attendance recorded"}, status=201)
+    
+class AttendanceReportView(ListAPIView):
+    permission_classes = [IsAuthenticated, IsAdminOrSuperUser]
+    serializer_classes = AttendanceReportSerializer
+
+    def get_queryset(self):
+        today = timezone.now().date()
+        return Attendance.objects.filter(
+            scanned_at__date=today,
+            group=self.request.user.group
+        ).select_related("user", "group")

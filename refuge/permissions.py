@@ -1,28 +1,68 @@
-from rest_framework.permissions import BasePermission
+from rest_framework.permissions import BasePermission, SAFE_METHODS
+
+
+class IsAuthenticatedAndActive(BasePermission):
+    """
+    Base safety check used internally by other permissions
+    """
+
+    def has_permission(self, request, view):
+        user = request.user
+        return bool(
+            user and
+            user.is_authenticated and
+            user.is_active
+        )
+
 
 class IsSuperUser(BasePermission):
+
     def has_permission(self, request, view):
-        return (
-            request.user.is_authenticated and
-            request.user.role == 'SUPERUSER'
+        user = request.user
+
+        return bool(
+            user and
+            user.is_authenticated and
+            user.is_active and
+            user.is_superuser and
+            user.role == "SUPERUSER"
         )
-    
+
 
 class IsAdminOrSuperUser(BasePermission):
-    """
-    Allows access only to ADMIN or SUPERUSER roles.
-    """
+
     def has_permission(self, request, view):
-        return (
-            request.user and
-            request.user.is_authenticated and 
-            request.user.role in ['ADMIN', 'SUPERUSER']
-        )
-    
+        user = request.user
+
+        if not user or not user.is_authenticated or not user.is_active:
+            return False
+
+        if user.is_superuser and user.role == "SUPERUSER":
+            return True
+
+        if (
+            user.role == "ADMIN" and
+            user.is_staff
+        ):
+            return True
+
+        return False
+
 
 class IsSameGroup(BasePermission):
+    """
+    OBJECT-LEVEL PROTECTION:
+    - Prevents cross-group access
+    - Superuser bypasses
+    """
+
     def has_object_permission(self, request, view, obj):
-        if not request.user.is_authenticated:
+        user = request.user
+
+        if not user or not user.is_authenticated or not user.is_active:
             return False
-        
-        return request.user.group == obj.group
+
+        if user.is_superuser:
+            return True
+
+        return getattr(obj, "group", None) == user.group

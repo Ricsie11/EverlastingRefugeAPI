@@ -1,7 +1,7 @@
 from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 
-from .models import CustomUser, Group, HouseFellowship
+from .models import CustomUser, Group, HouseFellowship,Attendance
 
 
 # ============================
@@ -130,3 +130,17 @@ class JoinGroupSerializer(serializers.ModelSerializer):
         user.group = self.validated_data["group"]
         user.save()
         return user
+    
+
+class AttendanceReportSerializer(serializers.ModelSerializer):
+    user_email = serializers.EmailField(source="user.email")
+    group_name = serializers.CharField(source="group.name")
+
+    class Meta:
+        model = Attendance
+        fields = [
+            "id",
+            "user_name",
+            "group_name",
+            "scanned_at",
+        ]
