@@ -14,23 +14,22 @@ from datetime import timedelta
 from decouple import config
 from pathlib import Path
 
-# Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-
-# SECURITY WARNING: keep the secret key used in production secret!
 # ===========================
 # 🔐 SECURITY SETTINGS
 # ===========================
+
 SECRET_KEY = config("SECRET_KEY")
 
-# SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = config("DEBUG", default=False, cast=bool)
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = config(
+    "ALLOWED_HOSTS",
+    default="localhost,127.0.0.1",
+    cast=lambda v: [s.strip() for s in v.split(",")]
+)
 
-
-# Application definition
 # ===========================
 # 🧩 INSTALLED APPS
 # ===========================
@@ -43,7 +42,7 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
 
-     # Local app
+    # Local app
     "refuge",
 
     # Third-party
@@ -54,10 +53,10 @@ INSTALLED_APPS = [
     'django_celery_results',
 ]
 
-
 # ===========================
 # ⚙️ MIDDLEWARE
 # ===========================
+
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
@@ -69,33 +68,15 @@ MIDDLEWARE = [
 ]
 
 # ===========================
-# 📁 URL / WSGI CONFIG
+# 📁 URL / WSGI
 # ===========================
-ROOT_URLCONF = 'refuge_api.urls'
 
-TEMPLATES = [
-    {
-        'BACKEND': 'django.template.backends.django.DjangoTemplates',
-        'DIRS': [],
-        'APP_DIRS': True,
-        'OPTIONS': {
-            'context_processors': [
-                'django.template.context_processors.request',
-                'django.contrib.auth.context_processors.auth',
-                'django.contrib.messages.context_processors.messages',
-            ],
-        },
-    },
-]
+ROOT_URLCONF = 'refuge_api.urls'
 
 WSGI_APPLICATION = 'refuge_api.wsgi.application'
 
-
-# Database
-# https://docs.djangoproject.com/en/6.0/ref/settings/#databases
-
 # ===========================
-# 🧮 DATABASE CONFIG
+# 🧮 DATABASE
 # ===========================
 
 DATABASES = {
@@ -105,59 +86,63 @@ DATABASES = {
     }
 }
 
-
-# https://docs.djangoproject.com/en/6.0/ref/settings/#auth-password-validators
 # ===========================
 # 🔑 PASSWORD VALIDATION
 # ===========================
+
 AUTH_PASSWORD_VALIDATORS = [
-    {
-        'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator',
-    },
-    {
-        'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator',
-    },
-    {
-        'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator',
-    },
-    {
-        'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator',
-    },
+    {'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator'},
+    {'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator'},
+    {'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator'},
+    {'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator'},
 ]
 
-
-# https://docs.djangoproject.com/en/6.0/topics/i18n/
 # ===========================
 # 🌍 INTERNATIONALIZATION
 # ===========================
+
 LANGUAGE_CODE = 'en-us'
 
-TIME_ZONE = 'UTC'
+TIME_ZONE = 'Africa/Lagos'
 
 USE_I18N = True
-
 USE_TZ = True
 
+# ===========================
+# 📦 STATIC & MEDIA FILES
+# ===========================
 
-# Static files (CSS, JavaScript, Images)
-# https://docs.djangoproject.com/en/6.0/howto/static-files/
-# ===========================
-# 📦 STATIC FILES
-# ===========================
-STATIC_URL = 'static/'
+STATIC_URL = '/static/'
+STATIC_ROOT = BASE_DIR / "staticfiles"
 
+MEDIA_URL = '/media/'
+MEDIA_ROOT = BASE_DIR / "media"
 
 # ===========================
-# 🔐 REST FRAMEWORK & JWT
+# 🔐 REST FRAMEWORK
 # ===========================
+
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
         'rest_framework_simplejwt.authentication.JWTAuthentication',
     ],
+
+    # Allows QR scan & login endpoints to work
     'DEFAULT_PERMISSION_CLASSES': [
-        'rest_framework.permissions.IsAuthenticated',
+        'rest_framework.permissions.AllowAny',
     ],
+
+    "DEFAULT_THROTTLE_CLASSES": [
+        "rest_framework.throttling.UserRateThrottle",
+    ],
+    "DEFAULT_THROTTLE_RATES": {
+        "user": "10/min"
+    }
 }
+
+# ===========================
+# 🔐 JWT
+# ===========================
 
 SIMPLE_JWT = {
     'ACCESS_TOKEN_LIFETIME': timedelta(minutes=15),
@@ -165,29 +150,36 @@ SIMPLE_JWT = {
     'ROTATE_REFRESH_TOKENS': True,
     'BLACKLIST_AFTER_ROTATION': True,
 
-
     'AUTH_HEADER_TYPES': ('Bearer',),
-    'AUTH_TOKEN_CLASSES': ('rest_framework_simplejwt.tokens.AccessToken',),
 }
 
-
-
 # ===========================
-# ⚙️ DEFAULT PRIMARY KEY
+# 👤 AUTH
 # ===========================
-DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
-
 
 AUTH_USER_MODEL = "refuge.CustomUser"
-
-
-CELERY_BROKER_URL = "redis://127.0.0.1:6379/0"
-CELERY_ACCEPT_CONTENT = ['json']
-CELERY_TASK_SERIALIZER = 'json'
-
-CELERY_BEAT_SCHEDULER = 'django_celery_beat.schedulers:DatabaseScheduler'
-
 
 AUTHENTICATION_BACKENDS = [
     "django.contrib.auth.backends.ModelBackend",
 ]
+
+# ===========================
+# ⚙️ CELERY
+# ===========================
+
+CELERY_BROKER_URL = config(
+    "CELERY_BROKER_URL",
+    default="redis://127.0.0.1:6379/0"
+)
+
+CELERY_ACCEPT_CONTENT = ['json']
+CELERY_TASK_SERIALIZER = 'json'
+CELERY_TIMEZONE = 'Africa/Lagos'
+
+CELERY_BEAT_SCHEDULER = 'django_celery_beat.schedulers:DatabaseScheduler'
+
+# ===========================
+# ⚙️ DEFAULT PRIMARY KEY
+# ===========================
+
+DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'

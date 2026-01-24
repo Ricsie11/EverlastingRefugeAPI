@@ -138,6 +138,10 @@ class Attendance(models.Model):
         return f"{self.user.email} - {self.scanned_at}"
 
 
+
+# =======================
+# Event
+# =======================
 class Event(models.Model):
     title = models.CharField(max_length=200)
     description = models.TextField()
