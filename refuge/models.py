@@ -6,11 +6,13 @@ import uuid
 from django.utils import timezone
 from io import BytesIO
 import qrcode
-import secrets
 from django.core.files import File
+from datetime import timedelta
 
 
-# Create your models here.
+# =======================
+# Custom User
+# =======================
 class CustomUser (AbstractUser):
     role = models.CharField(
         max_length=20,
@@ -32,9 +34,12 @@ class CustomUser (AbstractUser):
 
 
     def __str__(self):
-        return self.username
+        return f"{self.email} - {self.username}"
     
 
+# =======================
+# Group
+# =======================
 class Group(models.Model):
     name = models.CharField(max_length=100)
     description = models.TextField(blank=True)
@@ -51,6 +56,9 @@ class Group(models.Model):
         return self.name
 
 
+# =======================
+# House Fellowship
+# =======================
 class HouseFellowship(models.Model):
     fellowship_name = models.CharField(max_length=255)
     location = models.CharField(max_length=255)
@@ -66,12 +74,15 @@ class HouseFellowship(models.Model):
 
 
     def __str__(self):
-        return self.fellowship_name + "at" + self.location
+        return f"{self.fellowship_name}  at  {self.location}"
     
 
+# =======================
+# Attendance QR
+# =======================
 class AttendanceQR(models.Model):
     group = models.ForeignKey(Group, on_delete=models.CASCADE)
-    qr_image = models.ImageField(upload_to='qrcodes/')
+    qr_image = models.ImageField(upload_to='qrcodes/', blank=True)
     token = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
     created_at = models.DateTimeField(auto_now_add=True)
     expires_at = models.DateTimeField(null=True, blank=True)
@@ -84,33 +95,35 @@ class AttendanceQR(models.Model):
     )
 
     def save(self, *args, **kwargs):
-        #Only generate QR once
-        if not self.qr_image:
+        # Generate QR image ONCE after initial save
+        is_new = self.pk is None
+        super().save(*args, **kwargs)
 
-          # Generate a unique token for scanning
-            self.token = secrets.token_urlsafe(16)
-
-            # Generate QR with token as data
-            qr = qrcode.make(self.token)
+        if is_new and not self.qr_image:
+            qr = qrcode.make(str(self.token))
             buffer = BytesIO()
             qr.save(buffer)
-            self.qr_image.save(f"{self.group.name}_{timezone.now().strftime('%Y%m%d_%H%M%S')}.png", File(buffer), save=False)
 
-              # Set expiration to 1 PM on the day of creation if not already set
-        if not self.expires_at:
-            self.expires_at = self.created_at.replace(hour=13, minute=0, second=0, microsecond=0)
+            self.qr_image.save(
+                f"group_{self.group.id}_{self.created_at.date()}.png",
+                File(buffer),
+                save=False
+            )
 
-            super().save(*args, **kwargs)
+            if not self.expires_at:
+                self.expires_at = self.created_at + timedelta(hours=9)
 
+            super().save(update_fields=["qr_image", "expires_at"])
 
     def is_valid(self):
-        """Check if the QR is active and not expired"""
         return self.is_active and timezone.now() <= self.expires_at
-    
+
     def __str__(self):
         return f"QR for {self.group.name}"
 
-
+# =======================
+# Attendance
+# =======================
 class Attendance(models.Model):
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
     group = models.ForeignKey(Group, on_delete=models.CASCADE)
@@ -119,7 +132,15 @@ class Attendance(models.Model):
 
 
     class Meta:
-        unique_together = ("user", "qr_session")  # ONE scan per QR
+        unique_together = ("user", "qr_session")  # Prevent double scan
 
     def __str__(self):
         return f"{self.user.email} - {self.scanned_at}"
+
+
+class Event(models.Model):
+    title = models.CharField(max_length=200)
+    description = models.TextField()
+    date = models.DateTimeField()
+    image = models.ImageField(upload_to="events/", blank=True)
+    is_active = models.BooleanField(default=True)

@@ -1,7 +1,7 @@
 from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 
-from .models import CustomUser, Group, HouseFellowship,Attendance
+from .models import CustomUser, Group, HouseFellowship, Attendance, Event
 
 
 # ============================
@@ -143,4 +143,16 @@ class AttendanceReportSerializer(serializers.ModelSerializer):
             "user_name",
             "group_name",
             "scanned_at",
+        ]
+
+class EventSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Event
+        fields = [
+            "id",
+            "title",
+            "description",
+            "date",
+            "image",
+            "is_active",
         ]

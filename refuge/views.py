@@ -9,7 +9,8 @@ from .models import (
     Group,
     HouseFellowship,
     AttendanceQR,
-    Attendance
+    Attendance,
+    Event
 )
 from .permissions import IsAdminOrSuperUser
 from rest_framework_simplejwt.views import TokenObtainPairView
@@ -20,10 +21,13 @@ from .serializers import (
     UserRegistrationSerializer,
     EmailTokenObtainPairSerializer,
     JoinGroupSerializer,
-    AttendanceReportSerializer
+    AttendanceReportSerializer,
+    EventSerializer
 )
 import logging
-from django.db import IntegrityError
+from django.db import IntegrityError, transaction
+
+logger = logging.getLogger(__name__)
 
 # =======================
 # User Registration Views
@@ -67,7 +71,7 @@ class UserListView(ListCreateAPIView):
     Access restricted to ADMIN and SUPERUSER only.
     """
     permission_classes = [IsAdminOrSuperUser]
-    serializers_class = UserSerializer  # Serializer for user data
+    serializer_class = UserSerializer  # Serializer for user data
 
     def get_queryset(self):
         """
@@ -159,7 +163,7 @@ class HouseFellowshipListView(ListCreateAPIView):
         Automatically set the creator of the fellowship
         to the currently authenticated user.
         """
-        serializer.save(created_at=self.request.user)
+        serializer.save(created_by=self.request.user)
 
 
 class HouseFellowshipDetailView(RetrieveUpdateDestroyAPIView):
@@ -194,7 +198,7 @@ class CurrentQRView(APIView):
         """
         # Ensure the user belongs to a group
         if not request.user.group:
-            return Response({"detail": "No group assigned"}, status=400)
+            return Response({"detail": "No group assigned"}, status=status.HTTP_400_BAD_REQUEST)
         
         # Fetch the latest active and valid QR code for the group
         qr = AttendanceQR.objects.filter(
@@ -205,14 +209,16 @@ class CurrentQRView(APIView):
 
         # If no active QR exists
         if not qr:
-            return Response({"detail": "No active QR"}, status=404)
+            return Response({"detail": "No active QR"}, status=status.HTTP_404_NOT_FOUND)
         
-        # Return QR token (frontend will generate the QR image)
-        return Response({"token": qr.token})
+         # Audit log
+        logger.info(
+            f"[QR_ACCESS] admin={request.user.id} group={qr.group.id} qr={qr.id}"
+        )
+        
+        # Return QR token
+        return Response({"token": qr.token, "expires_at":qr.expires_at})
 
-
-
-logger = logging.getLogger(__name__)
 
 class ScanQRView(APIView):
     """
@@ -220,6 +226,7 @@ class ScanQRView(APIView):
     """
     permission_classes = [IsAuthenticated]
 
+    @transaction.atomic
     def post(self, request):
         """
         Validate the QR token and record attendance
@@ -229,22 +236,27 @@ class ScanQRView(APIView):
 
         # Token must be provided
         if not token:
-            return Response({"detail": "Token required"}, status=400)
+            return Response({"detail": "Token required"}, status=status.HTTP_400_BAD_REQUEST)
 
         # Validate QR token and expiration
-        qr = AttendanceQR.objects.filter(
-            token=token,
-            is_active=True,
-            expires_at__gte=timezone.now()
-        ).select_related("group").first()
+        qr = (
+            AttendanceQR.objects.select_for_update()
+            .select_related("group")
+            .filter(
+                token=token,
+                is_active=True,
+                expires_at__gte=timezone.now(),
+            )
+            .first()
+        )
 
         # Invalid or expired QR
         if not qr:
-            return Response({"detail": "Invalid or expired QR"}, status=400)
+            return Response({"detail": "Invalid or expired QR"}, status=status.HTTP_400_BAD_REQUEST)
         
         # Ensure user belongs to the same group as the QR
         if request.user.group != qr.group:
-            return Response({"detail": "QR does not belong to your group"}, status=403)
+            return Response({"detail": "QR does not belong to your group"}, status=status.HTTP_403_FORBIDDEN)
         
         try:
         # Record attendance (prevents duplicate scans)
@@ -254,17 +266,25 @@ class ScanQRView(APIView):
             qr_session=qr
         )
         except IntegrityError:
-            return Response({"detail":"Attendance already recorded"}, status=409)
+             # Relies on DB unique constraint
+            return Response({"detail":"Attendance already recorded"}, status=status.HTTP_409_CONFLICT)
         
         logger.info(
             f"[ATTENDANCE] user={request.user.id} group={qr.group.id} qr={qr.id}"
         )
 
-        return Response({"detail":"Attendance recorded"}, status=201)
+        return Response({"detail":"Attendance recorded"}, status=status.HTTP_201_CREATED)
     
+
+# =======================
+# Attendance Report (ADMIN)
+# =======================
 class AttendanceReportView(ListAPIView):
-    permission_classes = [IsAuthenticated, IsAdminOrSuperUser]
-    serializer_classes = AttendanceReportSerializer
+    """
+    Daily attendance report for admin's group
+    """
+    permission_classes = [IsAdminOrSuperUser]
+    serializer_class = AttendanceReportSerializer
 
     def get_queryset(self):
         today = timezone.now().date()
@@ -272,3 +292,71 @@ class AttendanceReportView(ListAPIView):
             scanned_at__date=today,
             group=self.request.user.group
         ).select_related("user", "group")
+    
+
+class PublicEventListView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        now = timezone.now()
+
+        upcoming = Event.objects.filter(date__gte=now, is_active=True).order_by("date")
+        past = Event.objects.filter(date__lt=now).order_by("-date")
+
+        return Response({
+            "upcoming": EventSerializer(upcoming, many=True).data,
+            "past": EventSerializer(past, many=True).data
+        })
+    
+
+
+class AdminEventView(APIView):
+    permission_classes = [IsAdminOrSuperUser]
+
+    def post(self, request):
+        serializer = EventSerializer(data=request.data)
+        if serializer.is_valid():
+            serializer.save()
+            return Response(
+                serializer.data,
+                status=status.HTTP_201_CREATED
+            )
+        return Response(
+            serializer.errors,
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    def patch(self, request, event_id):
+        try:
+            event = Event.objects.get(id=event_id)
+        except Event.DoesNotExist:
+            return Response(
+                {"detail": "Event not found"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        serializer = EventSerializer(
+            event,
+            data=request.data,
+            partial=True
+        )
+
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data)
+
+        return Response(
+            serializer.errors,
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    def delete(self, request, event_id):
+        deleted, _ = Event.objects.filter(id=event_id).delete()
+
+        if not deleted:
+            return Response(
+                {"detail": "Event not found"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        return Response(status=status.HTTP_204_NO_CONTENT)

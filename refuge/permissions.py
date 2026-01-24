@@ -1,4 +1,4 @@
-from rest_framework.permissions import BasePermission, SAFE_METHODS
+from rest_framework.permissions import BasePermission
 
 
 class IsAuthenticatedAndActive(BasePermission):
@@ -34,20 +34,12 @@ class IsAdminOrSuperUser(BasePermission):
     def has_permission(self, request, view):
         user = request.user
 
-        if not user or not user.is_authenticated or not user.is_active:
-            return False
-
-        if user.is_superuser and user.role == "SUPERUSER":
-            return True
-
-        if (
-            user.role == "ADMIN" and
-            user.is_staff
-        ):
-            return True
-
-        return False
-
+        return bool(
+            user
+            and user.is_authenticated
+            and user.role in {"ADMIN", "SUPERUSER"}
+            and user.is_active
+        )
 
 class IsSameGroup(BasePermission):
     """
